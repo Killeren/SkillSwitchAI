@@ -38,7 +38,7 @@ class MCPServer:
             ),
             "deepseek-r1-distill-70b": ModelInfo(
                 name="DeepSeek R1 Distill 70B",
-                model_id="deepseek-ai/DeepSeek-R1-Distill-Qwen-70B",
+                model_id="deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
                 specialties=["reasoning", "chain_of_thought", "problem_solving", "analysis"],
                 capabilities=["complex_reasoning", "mathematical_problem_solving", "logical_analysis", "critical_thinking"],
                 strengths="Superior chain-of-thought reasoning and complex problem-solving capabilities",
