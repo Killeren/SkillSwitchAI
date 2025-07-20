@@ -67,24 +67,66 @@ class TogetherAIWorkflow:
         """Base agent selects appropriate generator and critic models"""
         print("🤖 Base Agent: Selecting optimal models...")
 
-        # Use MCP server to select models
-        selection_result = await mcp_server.handle_request(
-            "select_models",
-            user_input=state["user_input"],
-            chat_history=state.get("chat_history", [])
-        )
+        try:
+            # Use MCP server to select models
+            selection_result = await mcp_server.handle_request(
+                "select_models",
+                user_input=state["user_input"],
+                chat_history=state.get("chat_history", [])
+            )
 
-        state["selected_generator"] = selection_result["generator"]
-        state["selected_critic"] = selection_result["critic"]
-        state["metadata"] = {
-            "task_classification": selection_result["task_classification"],
-            "selection_reasoning": selection_result["reasoning"],
-            "timestamp": datetime.now().isoformat()
-        }
+            # Ensure we have valid selection results
+            if "generator" not in selection_result or "critic" not in selection_result:
+                print("❌ Invalid model selection result, using defaults")
+                # Fallback to default models using MCP server
+                all_models = await mcp_server.handle_request("list_models")
+                selection_result = {
+                    "generator": all_models["meta-llama-3.3-70b-instruct-turbo"],
+                    "critic": all_models["deepseek-r1-distill-70b"],
+                    "task_classification": {"task_type": "general_conversation", "confidence": 0.5},
+                    "reasoning": "Using default models due to selection error"
+                }
 
-        print(f"✅ Selected Generator: {selection_result['generator']['name']}")
-        print(f"✅ Selected Critic: {selection_result['critic']['name']}")
-        print(f"📋 Task Type: {selection_result['task_classification']['task_type']}")
+            state["selected_generator"] = selection_result["generator"]
+            state["selected_critic"] = selection_result["critic"]
+            state["metadata"] = {
+                "task_classification": selection_result.get("task_classification", {"task_type": "unknown"}),
+                "selection_reasoning": selection_result.get("reasoning", "Default selection"),
+                "timestamp": datetime.now().isoformat()
+            }
+
+            print(f"✅ Selected Generator: {selection_result['generator']['name']}")
+            print(f"✅ Selected Critic: {selection_result['critic']['name']}")
+            print(f"📋 Task Type: {selection_result['task_classification']['task_type']}")
+
+        except Exception as e:
+            print(f"❌ Error in base agent: {str(e)}")
+            # Fallback to default models using MCP server
+            try:
+                all_models = await mcp_server.handle_request("list_models")
+                state["selected_generator"] = all_models["meta-llama-3.3-70b-instruct-turbo"]
+                state["selected_critic"] = all_models["deepseek-r1-distill-70b"]
+            except:
+                # Ultimate fallback with hardcoded defaults
+                state["selected_generator"] = {
+                    "name": "Meta Llama 3.3 70B Instruct Turbo",
+                    "model_id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                    "specialties": ["general_chat", "multilingual", "reasoning", "analysis"],
+                    "strengths": "Excellent general-purpose model with strong multilingual support"
+                }
+                state["selected_critic"] = {
+                    "name": "DeepSeek R1 Distill 70B",
+                    "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-70B",
+                    "specialties": ["reasoning", "chain_of_thought", "problem_solving", "analysis"],
+                    "strengths": "Superior chain-of-thought reasoning and complex problem-solving capabilities"
+                }
+            
+            state["metadata"] = {
+                "task_classification": {"task_type": "general_conversation", "confidence": 0.5},
+                "selection_reasoning": f"Fallback due to error: {str(e)}",
+                "timestamp": datetime.now().isoformat()
+            }
+            print("✅ Using fallback models")
 
         return state
 
@@ -319,8 +361,8 @@ If the response is already high-quality (score 8+), you may indicate that minima
         return {
             "response": final_state["final_response"],
             "metadata": final_state["metadata"],
-            "generator_model": final_state["selected_generator"]["name"],
-            "critic_model": final_state["selected_critic"]["name"],
+            "generator_model": final_state.get("selected_generator", {}).get("name", "Unknown"),
+            "critic_model": final_state.get("selected_critic", {}).get("name", "Unknown"),
             "iterations": final_state["metadata"].get("final_iterations", 1),
             "quality_score": final_state["metadata"].get("quality_score", "N/A"),
             "last_image_url": final_state.get("last_image_url")
