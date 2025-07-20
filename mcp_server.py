@@ -1,13 +1,11 @@
 """
-Model Context Protocol Server for Together.ai Free Models
-Provides intelligent model selection based on task classification
+Model Context Protocol Server for SkillSwitchAI
+Provides model metadata and context for dynamic LLM-based selection
 """
 
 import json
-import asyncio
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 from pydantic import BaseModel
-import re
 
 class ModelInfo(BaseModel):
     name: str
@@ -19,20 +17,14 @@ class ModelInfo(BaseModel):
     performance_tier: str
     context_length: int
 
-class TaskClassification(BaseModel):
-    task_type: str
-    confidence: float
-    keywords: List[str]
-
 class MCPServer:
-    """MCP Server for Together.ai model selection and context"""
+    """MCP Server for SkillSwitchAI model metadata and context"""
 
     def __init__(self):
         self.models = self._initialize_models()
-        self.task_patterns = self._initialize_task_patterns()
 
     def _initialize_models(self) -> Dict[str, ModelInfo]:
-        """Initialize the database of Together.ai free models"""
+        """Initialize the database of available models"""
         return {
             "meta-llama-3.3-70b-instruct-turbo": ModelInfo(
                 name="Meta Llama 3.3 70B Instruct Turbo",
@@ -116,142 +108,6 @@ class MCPServer:
             )
         }
 
-    def _initialize_task_patterns(self) -> Dict[str, List[str]]:
-        """Initialize patterns for task classification"""
-        return {
-            "coding": [
-                "code", "programming", "function", "algorithm", "bug", "debug", 
-                "python", "javascript", "java", "c++", "html", "css", "sql",
-                "implement", "script", "class", "method", "variable", "syntax"
-            ],
-            "reasoning": [
-                "solve", "analyze", "logic", "problem", "mathematical", "calculate",
-                "reasoning", "think", "explain why", "how does", "prove", "derive",
-                "step by step", "chain of thought", "because", "therefore"
-            ],
-            "creative": [
-                "write", "creative", "story", "poem", "article", "blog", "essay",
-                "imagination", "fiction", "character", "plot", "narrative", "style"
-            ],
-            "vision": [
-                "image", "picture", "visual", "photo", "see", "look", "describe",
-                "analyze image", "what's in", "identify", "detect", "visual",
-                "generate an image", "create an image", "draw", "paint", "artwork", "illustration",
-                "make an image", "produce an image", "show me an image", "render an image", "image of", "create artwork"
-            ],
-            "general": [
-                "explain", "what is", "how to", "help me", "information",
-                "question", "chat", "talk", "discuss", "tell me"
-            ],
-            "translation": [
-                "translate", "translation", "language", "convert", "from english",
-                "to spanish", "french", "german", "chinese", "multilingual"
-            ]
-        }
-
-    def classify_task(self, user_input: str, chat_history: List[str] = None) -> TaskClassification:
-        """Classify the user's task based on input and chat history"""
-        user_input_lower = user_input.lower()
-
-        # Combine user input with recent chat history for context
-        full_context = user_input_lower
-        if chat_history:
-            recent_history = " ".join(chat_history[-3:]).lower()  # Last 3 messages
-            full_context += " " + recent_history
-
-        task_scores = {}
-
-        # Score each task type based on keyword matches
-        for task_type, keywords in self.task_patterns.items():
-            score = 0
-            matched_keywords = []
-
-            for keyword in keywords:
-                if keyword in full_context:
-                    score += 1
-                    matched_keywords.append(keyword)
-
-                # Bonus for exact phrase matches
-                if len(keyword.split()) > 1 and keyword in full_context:
-                    score += 0.5
-
-            if score > 0:
-                task_scores[task_type] = {
-                    'score': score / len(keywords),  # Normalize by total keywords
-                    'keywords': matched_keywords
-                }
-
-        # Determine the primary task type
-        if not task_scores:
-            return TaskClassification(
-                task_type="general",
-                confidence=0.5,
-                keywords=[]
-            )
-
-        best_task = max(task_scores.items(), key=lambda x: x[1]['score'])
-        task_type = best_task[0]
-        confidence = min(best_task[1]['score'] * 2, 1.0)  # Scale confidence
-        keywords = best_task[1]['keywords']
-
-        return TaskClassification(
-            task_type=task_type,
-            confidence=confidence,
-            keywords=keywords
-        )
-
-    def select_models(self, user_input: str, chat_history: List[str] = None) -> Tuple[ModelInfo, ModelInfo]:
-        """Select the best generator and critic models for the task"""
-        task_classification = self.classify_task(user_input, chat_history)
-        task_type = task_classification.task_type
-
-        # Model selection logic based on task type
-        selection_rules = {
-            "coding": {
-                "primary": ["deepseek-coder-v2-lite", "deepseek-r1-distill-70b"],
-                "critic": ["deepseek-r1-distill-70b", "meta-llama-3.3-70b-instruct-turbo"]
-            },
-            "reasoning": {
-                "primary": ["deepseek-r1-distill-70b", "deepseek-r1-distill-14b"],
-                "critic": ["meta-llama-3.3-70b-instruct-turbo", "deepseek-r1-distill-14b"]
-            },
-            "creative": {
-                "primary": ["meta-llama-3.3-70b-instruct-turbo", "mistral-7b"],
-                "critic": ["mistral-7b", "meta-llama-3.3-70b-instruct-turbo"]
-            },
-            "vision": {
-                "primary": ["flux-1-schnell"],
-                "critic": ["meta-llama-3.3-70b-instruct-turbo", "deepseek-r1-distill-14b"]
-            },
-            "translation": {
-                "primary": ["meta-llama-3.3-70b-instruct-turbo"],
-                "critic": ["mistral-7b", "deepseek-r1-distill-14b"]
-            },
-            "general": {
-                "primary": ["meta-llama-3.3-70b-instruct-turbo", "mistral-7b"],
-                "critic": ["deepseek-r1-distill-14b", "mistral-7b"]
-            }
-        }
-
-        # Get the selection rule for the task type
-        rule = selection_rules.get(task_type, selection_rules["general"])
-
-        # Select generator model (first choice from primary)
-        generator_key = rule["primary"][0]
-        generator_model = self.models[generator_key]
-
-        # Select critic model (prefer different model than generator)
-        critic_options = rule["critic"]
-        critic_key = critic_options[0]
-
-        # If critic would be same as generator, try second option
-        if len(critic_options) > 1 and critic_key == generator_key:
-            critic_key = critic_options[1]
-
-        critic_model = self.models[critic_key]
-
-        return generator_model, critic_model
-
     def get_model_context(self, model_ids: List[str]) -> Dict[str, ModelInfo]:
         """Get detailed context for specific models"""
         result = {}
@@ -267,52 +123,14 @@ class MCPServer:
         return self.models
 
     async def handle_request(self, request_type: str, **kwargs) -> Dict:
-        """Handle MCP requests"""
-        if request_type == "select_models":
-            user_input = kwargs.get("user_input", "")
-            chat_history = kwargs.get("chat_history", [])
-
-            generator, critic = self.select_models(user_input, chat_history)
-            task_classification = self.classify_task(user_input, chat_history)
-
-            return {
-                "generator": generator.dict(),
-                "critic": critic.dict(),
-                "task_classification": task_classification.dict(),
-                "reasoning": f"Selected {generator.name} for generation and {critic.name} for criticism based on {task_classification.task_type} task classification"
-            }
-
-        elif request_type == "list_models":
+        """Handle MCP requests for model metadata and context"""
+        if request_type == "list_models":
             return {model_key: model.dict() for model_key, model in self.models.items()}
-
         elif request_type == "get_model_context":
             model_ids = kwargs.get("model_ids", [])
             return {key: model.dict() for key, model in self.get_model_context(model_ids).items()}
-
         else:
             return {"error": f"Unknown request type: {request_type}"}
 
 # Global MCP server instance
 mcp_server = MCPServer()
-
-# Example usage functions
-async def test_model_selection():
-    """Test the model selection functionality"""
-    test_queries = [
-        "Write a Python function to sort a list",
-        "Solve this math problem: 2x + 5 = 15",
-        "Write a creative story about a robot",
-        "Analyze this image and describe what you see",
-        "What is artificial intelligence?"
-    ]
-
-    for query in test_queries:
-        result = await mcp_server.handle_request("select_models", user_input=query)
-        print(f"\nQuery: {query}")
-        print(f"Generator: {result['generator']['name']}")
-        print(f"Critic: {result['critic']['name']}")
-        print(f"Task: {result['task_classification']['task_type']} (confidence: {result['task_classification']['confidence']:.2f})")
-        print(f"Reasoning: {result['reasoning']}")
-
-if __name__ == "__main__":
-    asyncio.run(test_model_selection())
