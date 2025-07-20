@@ -131,19 +131,18 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
             # Use Together.ai to make the selection decision
             # Try with explicit API key first
             try:
-                response = together.complete.Complete.create(
-                    prompt=f"System: You are an expert AI model selector. Provide only valid JSON responses.\n\nUser: {selection_prompt}\n\nAssistant: ",
-                    model="meta-llama/Llama-3.3-70B-Instruct-Turbo",  # Use a reliable model for selection
-                    max_tokens=512,
-                    temperature=0.3,
-                    top_p=0.9,
-                    stop=["User:", "System:"],
-                    api_key=self.api_key
-                )
+                            response = together.Complete.create(
+                prompt=f"System: You are an expert AI model selector. Provide only valid JSON responses.\n\nUser: {selection_prompt}\n\nAssistant: ",
+                model="meta-llama/Llama-3.3-70B-Instruct-Turbo",  # Use a reliable model for selection
+                max_tokens=512,
+                temperature=0.3,
+                top_p=0.9,
+                stop=["User:", "System:"]
+            )
             except Exception as explicit_error:
                 print(f"⚠️ Explicit API key failed: {str(explicit_error)}")
                 # Fallback to global API key only
-                response = together.complete.Complete.create(
+                response = together.Complete.create(
                     prompt=f"System: You are an expert AI model selector. Provide only valid JSON responses.\n\nUser: {selection_prompt}\n\nAssistant: ",
                     model="meta-llama/Llama-3.3-70B-Instruct-Turbo",  # Use a reliable model for selection
                     max_tokens=512,
@@ -152,7 +151,7 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
                     stop=["User:", "System:"]
                 )
 
-            selection_text = response["output"]["choices"][0]["text"].strip()
+            selection_text = response["choices"][0]["text"].strip()
             
             # Parse the JSON response
             try:
@@ -296,7 +295,7 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
                 prompt = state["user_input"]
                 
                 # Try image generation with global API key
-                response = together.image.Image.create(
+                response = together.Image.create(
                     prompt=prompt,
                     model=state["selected_generator"]["model_id"],
                     results=1,
@@ -304,7 +303,7 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
                     height=1024,
                     steps=3
                 )
-                image_url = response["output"]["choices"][0]["image_url"]
+                image_url = response["data"][0]["url"]
                 state["current_response"] = f"![Generated Image]({image_url})\n\n[View Image]({image_url})"
                 state["last_image_url"] = image_url  # Store last image URL
                 print(f"🖼️ Generated image: {image_url}")
@@ -359,17 +358,16 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
             
             prompt += "Assistant: "
             
-            response = together.complete.Complete.create(
+            response = together.Complete.create(
                 prompt=prompt,
                 model=state["selected_generator"]["model_id"],
                 max_tokens=2048,
                 temperature=0.7,
                 top_p=0.9,
-                stop=["User:", "System:"],
-                api_key=self.api_key
+                stop=["User:", "System:"]
             )
 
-            generated_response = response["output"]["choices"][0]["text"].strip()
+            generated_response = response["choices"][0]["text"].strip()
             state["current_response"] = generated_response
 
             print(f"📝 Generated response ({len(generated_response)} chars)")
@@ -426,17 +424,16 @@ If the response is already high-quality (score 8+), you may indicate that minima
             # Get critic evaluation
             prompt = f"System: You are a helpful and constructive AI response critic.\n\nUser: {critic_prompt}\n\nAssistant: "
             
-            response = together.complete.Complete.create(
+            response = together.Complete.create(
                 prompt=prompt,
                 model=state["selected_critic"]["model_id"],
                 max_tokens=1024,
                 temperature=0.3,
                 top_p=0.9,
-                stop=["User:", "System:"],
-                api_key=self.api_key
+                stop=["User:", "System:"]
             )
 
-            critic_feedback = response["output"]["choices"][0]["text"].strip()
+            critic_feedback = response["choices"][0]["text"].strip()
             state["critic_feedback"] = critic_feedback
 
             # Extract quality score for decision making
