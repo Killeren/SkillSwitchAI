@@ -35,6 +35,11 @@ class TogetherAIWorkflow:
         self.api_key = api_key
         together.api_key = api_key
         self.graph = self._build_graph()
+        
+        # Verify API key is set
+        if not api_key:
+            raise ValueError("API key is required")
+        print(f"✅ API key initialized: {api_key[:10]}...")
 
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph state graph"""
@@ -67,6 +72,10 @@ class TogetherAIWorkflow:
     async def base_agent(self, state: AgentState) -> AgentState:
         """Base agent selects appropriate generator and critic models using LLM-based selection"""
         print("🤖 Base Agent: Selecting optimal models using LLM...")
+        
+        # Ensure we have access to the API key
+        if not hasattr(self, 'api_key') or not self.api_key:
+            raise ValueError("API key not available in base_agent")
 
         # Get all available models from MCP server
         all_models = mcp_server.list_all_models()
@@ -117,6 +126,7 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
         try:
             # Ensure API key is set
             together.api_key = self.api_key
+            print(f"🔑 Using API key: {self.api_key[:10]}...")
             # Use Together.ai to make the selection decision
             response = together.complete.Complete.create(
                 prompt=f"System: You are an expert AI model selector. Provide only valid JSON responses.\n\nUser: {selection_prompt}\n\nAssistant: ",
@@ -258,6 +268,10 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
 
     async def generator_agent(self, state: AgentState) -> AgentState:
         print(f"✍️  Generator Agent: Creating response with {state['selected_generator']['name']}...")
+        
+        # Ensure we have access to the API key
+        if not hasattr(self, 'api_key') or not self.api_key:
+            raise ValueError("API key not available in generator_agent")
 
         generator_name = state['selected_generator']['name'].lower()
         if "flux" in generator_name:
@@ -353,6 +367,10 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
     async def critic_agent(self, state: AgentState) -> AgentState:
         """Critic agent evaluates and provides feedback on the response"""
         print(f"🔍 Critic Agent: Evaluating with {state['selected_critic']['name']}...")
+        
+        # Ensure we have access to the API key
+        if not hasattr(self, 'api_key') or not self.api_key:
+            raise ValueError("API key not available in critic_agent")
 
         critic_name = state['selected_critic']['name'].lower()
         is_vision_critic = "vision" in critic_name or "image" in critic_name
