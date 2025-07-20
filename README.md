@@ -1,3 +1,8 @@
+# SkillSwitchAI
+Context based LLM selection for agentic workflow to provide more refined outputs
+
+---
+
 # Together.ai Multi-Agent Chat System
 
 An intelligent chat application that leverages Together.ai's free models through a sophisticated multi-agent architecture. The system uses Model Context Protocol (MCP) for smart model selection, LangGraph for iterative refinement workflows, and provides a modern ChatGPT-like interface.
