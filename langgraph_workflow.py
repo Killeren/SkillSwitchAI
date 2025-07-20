@@ -115,6 +115,8 @@ CHAT HISTORY: {state.get("chat_history", [])}
 Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2-lite", "mistral-7b", etc.)"""
 
         try:
+            # Ensure API key is set
+            together.api_key = self.api_key
             # Use Together.ai to make the selection decision
             response = together.complete.Complete.create(
                 prompt=f"System: You are an expert AI model selector. Provide only valid JSON responses.\n\nUser: {selection_prompt}\n\nAssistant: ",
@@ -122,7 +124,8 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
                 max_tokens=512,
                 temperature=0.3,
                 top_p=0.9,
-                stop=["User:", "System:"]
+                stop=["User:", "System:"],
+                api_key=self.api_key
             )
 
             selection_text = response["output"]["choices"][0]["text"].strip()
@@ -260,6 +263,8 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
         if "flux" in generator_name:
             # Handle image generation with FLUX.1 Schnell
             try:
+                # Ensure API key is set
+                together.api_key = self.api_key
                 prompt = state["user_input"]
                 response = together.image.Image.create(
                     prompt=prompt,
@@ -309,6 +314,8 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
             messages.append({"role": "user", "content": refinement_prompt})
 
         try:
+            # Ensure API key is set
+            together.api_key = self.api_key
             # Generate response using Together.ai
             # Convert messages to prompt format
             prompt = ""
@@ -328,7 +335,8 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
                 max_tokens=2048,
                 temperature=0.7,
                 top_p=0.9,
-                stop=["User:", "System:"]
+                stop=["User:", "System:"],
+                api_key=self.api_key
             )
 
             generated_response = response["output"]["choices"][0]["text"].strip()
@@ -379,6 +387,8 @@ If the response is already high-quality (score 8+), you may indicate that minima
 """
 
         try:
+            # Ensure API key is set
+            together.api_key = self.api_key
             # Get critic evaluation
             prompt = f"System: You are a helpful and constructive AI response critic.\n\nUser: {critic_prompt}\n\nAssistant: "
             
@@ -388,7 +398,8 @@ If the response is already high-quality (score 8+), you may indicate that minima
                 max_tokens=1024,
                 temperature=0.3,
                 top_p=0.9,
-                stop=["User:", "System:"]
+                stop=["User:", "System:"],
+                api_key=self.api_key
             )
 
             critic_feedback = response["output"]["choices"][0]["text"].strip()
