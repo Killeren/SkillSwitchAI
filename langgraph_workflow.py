@@ -33,7 +33,6 @@ class TogetherAIWorkflow:
 
     def __init__(self, api_key: str):
         self.api_key = api_key
-        together.api_key = api_key
         self.graph = self._build_graph()
         
         # Verify API key is set
@@ -124,8 +123,6 @@ CHAT HISTORY: {state.get("chat_history", [])}
 Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2-lite", "mistral-7b", etc.)"""
 
         try:
-            # Ensure API key is set both globally and explicitly
-            together.api_key = self.api_key
             print(f"🔑 Using API key: {self.api_key[:10]}...")
             
             # Use Together.ai to make the selection decision
@@ -290,8 +287,6 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
         if "flux" in generator_name:
             # Handle image generation with FLUX.1 Schnell
             try:
-                # Ensure API key is set
-                together.api_key = self.api_key
                 prompt = state["user_input"]
                 
                 # Try image generation with global API key
@@ -343,8 +338,6 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
             messages.append({"role": "user", "content": refinement_prompt})
 
         try:
-            # Ensure API key is set
-            together.api_key = self.api_key
             # Generate response using Together.ai
             # Convert messages to prompt format
             prompt = ""
@@ -419,8 +412,6 @@ If the response is already high-quality (score 8+), you may indicate that minima
 """
 
         try:
-            # Ensure API key is set
-            together.api_key = self.api_key
             # Get critic evaluation
             prompt = f"System: You are a helpful and constructive AI response critic.\n\nUser: {critic_prompt}\n\nAssistant: "
             
