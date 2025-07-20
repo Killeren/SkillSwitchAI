@@ -8,7 +8,7 @@ import json
 from typing import Dict, List, Optional, TypedDict, Annotated
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from together import Together
+import together
 from mcp_server import mcp_server
 import os
 from datetime import datetime
@@ -32,7 +32,8 @@ class TogetherAIWorkflow:
     """LangGraph workflow for multi-agent conversation system"""
 
     def __init__(self, api_key: str):
-        self.client = Together(api_key=api_key)
+        self.api_key = api_key
+        together.api_key = api_key
         self.graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
@@ -64,29 +65,193 @@ class TogetherAIWorkflow:
         return workflow.compile()
 
     async def base_agent(self, state: AgentState) -> AgentState:
-        """Base agent selects appropriate generator and critic models"""
-        print("🤖 Base Agent: Selecting optimal models...")
+        """Base agent selects appropriate generator and critic models using LLM-based selection"""
+        print("🤖 Base Agent: Selecting optimal models using LLM...")
 
-        # Use MCP server to select models
-        selection_result = await mcp_server.handle_request(
-            "select_models",
-            user_input=state["user_input"],
-            chat_history=state.get("chat_history", [])
+        # Get all available models from MCP server
+        all_models = mcp_server.list_all_models()
+        
+        # Convert models to JSON format for LLM consumption
+        models_json = json.dumps(
+            {k: {
+                "name": v.name,
+                "model_id": v.model_id,
+                "specialties": v.specialties,
+                "capabilities": v.capabilities,
+                "strengths": v.strengths,
+                "use_cases": v.use_cases,
+                "performance_tier": v.performance_tier,
+                "context_length": v.context_length
+            } for k, v in all_models.items()}, 
+            indent=2
         )
 
-        state["selected_generator"] = selection_result["generator"]
-        state["selected_critic"] = selection_result["critic"]
-        state["metadata"] = {
-            "task_classification": selection_result["task_classification"],
-            "selection_reasoning": selection_result["reasoning"],
-            "timestamp": datetime.now().isoformat()
-        }
+        # Create selection prompt for the LLM
+        selection_prompt = f"""You are an expert AI agent orchestrator. Your task is to select the best generator and critic models for a given user query.
 
-        print(f"✅ Selected Generator: {selection_result['generator']['name']}")
-        print(f"✅ Selected Critic: {selection_result['critic']['name']}")
-        print(f"📋 Task Type: {selection_result['task_classification']['task_type']}")
+Here is the context describing all available Together.ai models:
+{models_json}
+
+Given the user's query and conversation history, select the best model for generation and for criticism. The critic can be the same as the generator or different.
+
+Consider:
+- The user's query type and complexity
+- Each model's specialties and strengths
+- Performance tiers (high, medium, light, special)
+- Context length requirements
+- The conversation history for context
+
+Respond in this exact JSON format:
+{{
+  "generator": "model_key_here",
+  "critic": "model_key_here", 
+  "reasoning": "Brief explanation of your selection decision",
+  "confidence": 0.85
+}}
+
+USER QUERY: {state["user_input"]}
+CHAT HISTORY: {state.get("chat_history", [])}
+
+Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2-lite", "mistral-7b", etc.)"""
+
+        try:
+            # Use Together.ai to make the selection decision
+            response = together.complete.Complete.create(
+                prompt=f"System: You are an expert AI model selector. Provide only valid JSON responses.\n\nUser: {selection_prompt}\n\nAssistant: ",
+                model="meta-llama/Llama-3.3-70B-Instruct-Turbo",  # Use a reliable model for selection
+                max_tokens=512,
+                temperature=0.3,
+                top_p=0.9,
+                stop=["User:", "System:"]
+            )
+
+            selection_text = response["output"]["choices"][0]["text"].strip()
+            
+            # Parse the JSON response
+            try:
+                selection_result = json.loads(selection_text)
+                
+                # Validate the response
+                if "generator" not in selection_result or "critic" not in selection_result:
+                    raise ValueError("Missing generator or critic in selection result")
+                
+                generator_key = selection_result["generator"]
+                critic_key = selection_result["critic"]
+                
+                # Get the selected models from our database
+                if generator_key not in all_models:
+                    raise ValueError(f"Invalid generator key: {generator_key}")
+                if critic_key not in all_models:
+                    raise ValueError(f"Invalid critic key: {critic_key}")
+                
+                selected_generator = all_models[generator_key]
+                selected_critic = all_models[critic_key]
+                
+                state["selected_generator"] = {
+                    "name": selected_generator.name,
+                    "model_id": selected_generator.model_id,
+                    "specialties": selected_generator.specialties,
+                    "capabilities": selected_generator.capabilities,
+                    "strengths": selected_generator.strengths,
+                    "use_cases": selected_generator.use_cases,
+                    "performance_tier": selected_generator.performance_tier,
+                    "context_length": selected_generator.context_length
+                }
+                
+                state["selected_critic"] = {
+                    "name": selected_critic.name,
+                    "model_id": selected_critic.model_id,
+                    "specialties": selected_critic.specialties,
+                    "capabilities": selected_critic.capabilities,
+                    "strengths": selected_critic.strengths,
+                    "use_cases": selected_critic.use_cases,
+                    "performance_tier": selected_critic.performance_tier,
+                    "context_length": selected_critic.context_length
+                }
+                
+                state["metadata"] = {
+                    "selection_reasoning": selection_result.get("reasoning", "No reasoning provided"),
+                    "selection_confidence": selection_result.get("confidence", 0.5),
+                    "selection_method": "llm_based",
+                    "timestamp": datetime.now().isoformat()
+                }
+
+                print(f"✅ LLM Selected Generator: {selected_generator.name}")
+                print(f"✅ LLM Selected Critic: {selected_critic.name}")
+                print(f"📋 Reasoning: {selection_result.get('reasoning', 'No reasoning provided')}")
+                print(f"🎯 Confidence: {selection_result.get('confidence', 0.5)}")
+
+            except json.JSONDecodeError as e:
+                print(f"❌ Failed to parse LLM selection JSON: {e}")
+                print(f"Raw response: {selection_text}")
+                # Fallback to default selection
+                await self._fallback_model_selection(state, all_models)
+                
+        except Exception as e:
+            print(f"❌ LLM selection failed: {str(e)}")
+            # Fallback to default selection
+            await self._fallback_model_selection(state, all_models)
 
         return state
+
+    async def _fallback_model_selection(self, state: AgentState, all_models: Dict):
+        """Fallback model selection when LLM-based selection fails"""
+        print("🔄 Using fallback model selection...")
+        
+        # Simple rule-based fallback
+        user_input_lower = state["user_input"].lower()
+        
+        # Check for coding-related queries
+        if any(keyword in user_input_lower for keyword in ["code", "program", "function", "debug", "algorithm", "python", "javascript", "java"]):
+            generator_key = "deepseek-coder-v2-lite"
+            critic_key = "deepseek-r1-distill-14b"
+        # Check for reasoning/analysis queries
+        elif any(keyword in user_input_lower for keyword in ["explain", "analyze", "reason", "think", "logic", "problem"]):
+            generator_key = "deepseek-r1-distill-14b"
+            critic_key = "deepseek-r1-distill-70b"
+        # Check for image generation
+        elif any(keyword in user_input_lower for keyword in ["image", "picture", "photo", "generate image", "create image"]):
+            generator_key = "flux-1-schnell"
+            critic_key = "llama-3.2-11b-vision"
+        # Default to general purpose
+        else:
+            generator_key = "mistral-7b"
+            critic_key = "deepseek-r1-distill-14b"
+        
+        selected_generator = all_models[generator_key]
+        selected_critic = all_models[critic_key]
+        
+        state["selected_generator"] = {
+            "name": selected_generator.name,
+            "model_id": selected_generator.model_id,
+            "specialties": selected_generator.specialties,
+            "capabilities": selected_generator.capabilities,
+            "strengths": selected_generator.strengths,
+            "use_cases": selected_generator.use_cases,
+            "performance_tier": selected_generator.performance_tier,
+            "context_length": selected_generator.context_length
+        }
+        
+        state["selected_critic"] = {
+            "name": selected_critic.name,
+            "model_id": selected_critic.model_id,
+            "specialties": selected_critic.specialties,
+            "capabilities": selected_critic.capabilities,
+            "strengths": selected_critic.strengths,
+            "use_cases": selected_critic.use_cases,
+            "performance_tier": selected_critic.performance_tier,
+            "context_length": selected_critic.context_length
+        }
+        
+        state["metadata"] = {
+            "selection_reasoning": f"Fallback selection: {generator_key} for generation, {critic_key} for criticism",
+            "selection_confidence": 0.6,
+            "selection_method": "fallback_rule_based",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        print(f"✅ Fallback Generator: {selected_generator.name}")
+        print(f"✅ Fallback Critic: {selected_critic.name}")
 
     async def generator_agent(self, state: AgentState) -> AgentState:
         print(f"✍️  Generator Agent: Creating response with {state['selected_generator']['name']}...")
@@ -96,14 +261,15 @@ class TogetherAIWorkflow:
             # Handle image generation with FLUX.1 Schnell
             try:
                 prompt = state["user_input"]
-                response = self.client.images.generate(
-                    model=state["selected_generator"]["model_id"],
+                response = together.image.Image.create(
                     prompt=prompt,
-                    n=1,
-                    size="1024x1024",
+                    model=state["selected_generator"]["model_id"],
+                    results=1,
+                    width=1024,
+                    height=1024,
                     steps=3
                 )
-                image_url = response.data[0].url
+                image_url = response["output"]["choices"][0]["image_url"]
                 state["current_response"] = f"![Generated Image]({image_url})\n\n[View Image]({image_url})"
                 state["last_image_url"] = image_url  # Store last image URL
                 print(f"🖼️ Generated image: {image_url}")
@@ -144,16 +310,28 @@ class TogetherAIWorkflow:
 
         try:
             # Generate response using Together.ai
-            response = self.client.chat.completions.create(
+            # Convert messages to prompt format
+            prompt = ""
+            for msg in messages:
+                if msg["role"] == "system":
+                    prompt += f"System: {msg['content']}\n\n"
+                elif msg["role"] == "user":
+                    prompt += f"User: {msg['content']}\n\n"
+                elif msg["role"] == "assistant":
+                    prompt += f"Assistant: {msg['content']}\n\n"
+            
+            prompt += "Assistant: "
+            
+            response = together.complete.Complete.create(
+                prompt=prompt,
                 model=state["selected_generator"]["model_id"],
-                messages=messages,
                 max_tokens=2048,
                 temperature=0.7,
                 top_p=0.9,
-                stream=False
+                stop=["User:", "System:"]
             )
 
-            generated_response = response.choices[0].message.content
+            generated_response = response["output"]["choices"][0]["text"].strip()
             state["current_response"] = generated_response
 
             print(f"📝 Generated response ({len(generated_response)} chars)")
@@ -202,19 +380,18 @@ If the response is already high-quality (score 8+), you may indicate that minima
 
         try:
             # Get critic evaluation
-            response = self.client.chat.completions.create(
+            prompt = f"System: You are a helpful and constructive AI response critic.\n\nUser: {critic_prompt}\n\nAssistant: "
+            
+            response = together.complete.Complete.create(
+                prompt=prompt,
                 model=state["selected_critic"]["model_id"],
-                messages=[
-                    {"role": "system", "content": "You are a helpful and constructive AI response critic."},
-                    {"role": "user", "content": critic_prompt}
-                ],
                 max_tokens=1024,
                 temperature=0.3,
                 top_p=0.9,
-                stream=False
+                stop=["User:", "System:"]
             )
 
-            critic_feedback = response.choices[0].message.content
+            critic_feedback = response["output"]["choices"][0]["text"].strip()
             state["critic_feedback"] = critic_feedback
 
             # Extract quality score for decision making
