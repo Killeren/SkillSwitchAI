@@ -124,19 +124,33 @@ CHAT HISTORY: {state.get("chat_history", [])}
 Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2-lite", "mistral-7b", etc.)"""
 
         try:
-            # Ensure API key is set
+            # Ensure API key is set both globally and explicitly
             together.api_key = self.api_key
             print(f"🔑 Using API key: {self.api_key[:10]}...")
+            
             # Use Together.ai to make the selection decision
-            response = together.complete.Complete.create(
-                prompt=f"System: You are an expert AI model selector. Provide only valid JSON responses.\n\nUser: {selection_prompt}\n\nAssistant: ",
-                model="meta-llama/Llama-3.3-70B-Instruct-Turbo",  # Use a reliable model for selection
-                max_tokens=512,
-                temperature=0.3,
-                top_p=0.9,
-                stop=["User:", "System:"],
-                api_key=self.api_key
-            )
+            # Try with explicit API key first
+            try:
+                response = together.complete.Complete.create(
+                    prompt=f"System: You are an expert AI model selector. Provide only valid JSON responses.\n\nUser: {selection_prompt}\n\nAssistant: ",
+                    model="meta-llama/Llama-3.3-70B-Instruct-Turbo",  # Use a reliable model for selection
+                    max_tokens=512,
+                    temperature=0.3,
+                    top_p=0.9,
+                    stop=["User:", "System:"],
+                    api_key=self.api_key
+                )
+            except Exception as explicit_error:
+                print(f"⚠️ Explicit API key failed: {str(explicit_error)}")
+                # Fallback to global API key only
+                response = together.complete.Complete.create(
+                    prompt=f"System: You are an expert AI model selector. Provide only valid JSON responses.\n\nUser: {selection_prompt}\n\nAssistant: ",
+                    model="meta-llama/Llama-3.3-70B-Instruct-Turbo",  # Use a reliable model for selection
+                    max_tokens=512,
+                    temperature=0.3,
+                    top_p=0.9,
+                    stop=["User:", "System:"]
+                )
 
             selection_text = response["output"]["choices"][0]["text"].strip()
             
@@ -280,6 +294,8 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
                 # Ensure API key is set
                 together.api_key = self.api_key
                 prompt = state["user_input"]
+                
+                # Try image generation with global API key
                 response = together.image.Image.create(
                     prompt=prompt,
                     model=state["selected_generator"]["model_id"],
