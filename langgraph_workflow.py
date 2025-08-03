@@ -272,7 +272,6 @@ Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2
             logger.error(f"LLM selection failed: {str(e)}")
             # Fallback to default selection
             await self._fallback_model_selection(state, all_models)
-
         return state
 
     async def _fallback_model_selection(self, state: AgentState, all_models: Dict):
@@ -600,8 +599,8 @@ If the response is already high-quality (score 8+), you may indicate that minima
         return {
             "response": final_state["final_response"],
             "metadata": final_state["metadata"],
-            "generator_model": final_state["selected_generator"]["name"],
-            "critic_model": final_state["selected_critic"]["name"],
+            "generator_model": final_state.get("selected_generator", {}).get("name", "Unknown"),
+            "critic_model": final_state.get("selected_critic", {}).get("name", "Unknown"),
             "iterations": final_state["metadata"].get("final_iterations", 1),
             "quality_score": final_state["metadata"].get("quality_score", "N/A"),
             "last_image_url": final_state.get("last_image_url")

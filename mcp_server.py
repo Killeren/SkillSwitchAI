@@ -129,8 +129,58 @@ class MCPServer:
         elif request_type == "get_model_context":
             model_ids = kwargs.get("model_ids", [])
             return {key: model.dict() for key, model in self.get_model_context(model_ids).items()}
+        elif request_type == "select_models":
+            return await self._select_models(**kwargs)
         else:
             return {"error": f"Unknown request type: {request_type}"}
+
+    async def _select_models(self, user_input: str, chat_history: List[str] = None) -> Dict:
+        """Select appropriate generator and critic models based on user input"""
+        # Simple rule-based model selection
+        user_input_lower = user_input.lower()
+        
+        # Default models
+        generator = self.models["meta-llama-3.3-70b-instruct-turbo"]
+        critic = self.models["deepseek-r1-distill-70b"]
+        
+        # Task classification
+        task_type = "general_conversation"
+        reasoning = "Selected general-purpose models for balanced performance"
+        
+        # Check for specific task types
+        if any(word in user_input_lower for word in ["code", "program", "debug", "function", "class", "algorithm"]):
+            generator = self.models["deepseek-coder-v2-lite"]
+            critic = self.models["deepseek-r1-distill-14b"]
+            task_type = "coding"
+            reasoning = "Detected coding-related query, selected specialized coding model"
+        
+        elif any(word in user_input_lower for word in ["image", "picture", "photo", "draw", "generate", "create image"]):
+            generator = self.models["flux-1-schnell"]
+            critic = self.models["llama-3.2-11b-vision"]
+            task_type = "image_generation"
+            reasoning = "Detected image generation request, selected FLUX.1 Schnell for image creation"
+        
+        elif any(word in user_input_lower for word in ["math", "calculate", "equation", "solve", "problem", "reasoning"]):
+            generator = self.models["deepseek-r1-distill-70b"]
+            critic = self.models["deepseek-r1-distill-14b"]
+            task_type = "mathematical_reasoning"
+            reasoning = "Detected mathematical/reasoning task, selected high-performance reasoning model"
+        
+        elif any(word in user_input_lower for word in ["creative", "story", "write", "poem", "artistic"]):
+            generator = self.models["mistral-7b"]
+            critic = self.models["meta-llama-3.3-70b-instruct-turbo"]
+            task_type = "creative_writing"
+            reasoning = "Detected creative writing task, selected Mistral for creative capabilities"
+        
+        return {
+            "generator": generator.dict(),
+            "critic": critic.dict(),
+            "task_classification": {
+                "task_type": task_type,
+                "confidence": 0.8
+            },
+            "reasoning": reasoning
+        }
 
 # Global MCP server instance
 mcp_server = MCPServer()

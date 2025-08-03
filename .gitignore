@@ -35,6 +35,39 @@ env/
 ENV/
 env.bak/
 venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
 .venv/
 
 # PyCharm
@@ -61,7 +94,6 @@ celerybeat.pid
 
 # SageMath parsed files
 *.sage.py
-
 # Environments
 .env
 .venv
@@ -70,7 +102,6 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
 # Spyder project settings
 .spyderproject
 .spyproject
