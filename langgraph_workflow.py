@@ -5,13 +5,49 @@ Implements Base Agent -> Generator -> Critic iterative refinement
 
 import asyncio
 import json
+import logging
+import os
+from datetime import datetime
 from typing import Dict, List, Optional, TypedDict, Annotated
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from together import Together
+import together
 from mcp_server import mcp_server
-import os
-from datetime import datetime
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('skillswitch.log')
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+# Fallback model selection configuration
+FALLBACK_RULES = {
+    "coding": {
+        "keywords": ["code", "program", "function", "debug", "algorithm", "python", "javascript", "java", "programming", "development"],
+        "generator": "deepseek-coder-v2-lite",
+        "critic": "deepseek-r1-distill-14b"
+    },
+    "reasoning": {
+        "keywords": ["explain", "analyze", "reason", "think", "logic", "problem", "why", "how", "compare"],
+        "generator": "deepseek-r1-distill-14b", 
+        "critic": "deepseek-r1-distill-70b"
+    },
+    "image": {
+        "keywords": ["image", "picture", "photo", "generate image", "create image", "draw", "visual"],
+        "generator": "flux-1-schnell",
+        "critic": "llama-3.2-11b-vision"
+    },
+    "default": {
+        "generator": "mistral-7b",
+        "critic": "deepseek-r1-distill-14b"
+    }
+}
 
 # State definition for the workflow
 class AgentState(TypedDict):
@@ -32,8 +68,13 @@ class TogetherAIWorkflow:
     """LangGraph workflow for multi-agent conversation system"""
 
     def __init__(self, api_key: str):
-        self.client = Together(api_key=api_key)
+        self.api_key = api_key
         self.graph = self._build_graph()
+        
+        # Verify API key is set
+        if not api_key:
+            raise ValueError("API key is required")
+        logger.info("API key initialized successfully")
 
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph state graph"""
@@ -63,89 +104,265 @@ class TogetherAIWorkflow:
 
         return workflow.compile()
 
-    async def base_agent(self, state: AgentState) -> AgentState:
-        """Base agent selects appropriate generator and critic models"""
-        print("🤖 Base Agent: Selecting optimal models...")
+    def _prepare_models_data(self, all_models: Dict) -> str:
+        """Convert models to JSON format for LLM consumption"""
+        return json.dumps(
+            {k: {
+                "name": v.name,
+                "model_id": v.model_id,
+                "specialties": v.specialties,
+                "capabilities": v.capabilities,
+                "strengths": v.strengths,
+                "use_cases": v.use_cases,
+                "performance_tier": v.performance_tier,
+                "context_length": v.context_length
+            } for k, v in all_models.items()}, 
+            indent=2
+        )
 
+    def _create_selection_prompt(self, state: AgentState, models_json: str) -> str:
+        """Create selection prompt for the LLM"""
+        return f"""You are an expert AI agent orchestrator. Your task is to select the best generator and critic models for a given user query.
+
+Here is the context describing all available Together.ai models:
+{models_json}
+
+Given the user's query and conversation history, select the best model for generation and for criticism. The critic can be the same as the generator or different.
+
+Consider:
+- The user's query type and complexity
+- Each model's specialties and strengths
+- Performance tiers (high, medium, light, special)
+- Context length requirements
+- The conversation history for context
+
+Respond in this exact JSON format:
+{{
+  "generator": "model_key_here",
+  "critic": "model_key_here", 
+  "reasoning": "Brief explanation of your selection decision",
+  "confidence": 0.85
+}}
+
+USER QUERY: {state["user_input"]}
+CHAT HISTORY: {state.get("chat_history", [])}
+
+Remember: Use the exact model keys from the JSON above (e.g., "deepseek-coder-v2-lite", "mistral-7b", etc.)"""
+
+    async def _call_llm_for_selection(self, selection_prompt: str) -> dict:
+        """Call Together.ai LLM for model selection"""
+        formatted_prompt = f"System: You are an expert AI model selector. Provide only valid JSON responses.\n\nUser: {selection_prompt}\n\nAssistant: "
+        
         try:
-            # Use MCP server to select models
-            selection_result = await mcp_server.handle_request(
-                "select_models",
-                user_input=state["user_input"],
-                chat_history=state.get("chat_history", [])
+            response = together.Complete.create(
+                prompt=formatted_prompt,
+                model="meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                max_tokens=512,
+                temperature=0.3,
+                top_p=0.9,
+                stop=["User:", "System:"]
             )
+        except Exception as explicit_error:
+            logger.warning(f"Explicit API key failed: {str(explicit_error)}")
+            # Fallback to global API key only
+            response = together.Complete.create(
+                prompt=formatted_prompt,
+                model="meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                max_tokens=512,
+                temperature=0.3,
+                top_p=0.9,
+                stop=["User:", "System:"]
+            )
+        
+        return response
 
-            # Ensure we have valid selection results
-            if "generator" not in selection_result or "critic" not in selection_result:
-                print("❌ Invalid model selection result, using defaults")
-                # Fallback to default models using MCP server
-                all_models = await mcp_server.handle_request("list_models")
-                selection_result = {
-                    "generator": all_models["meta-llama-3.3-70b-instruct-turbo"],
-                    "critic": all_models["deepseek-r1-distill-70b"],
-                    "task_classification": {"task_type": "general_conversation", "confidence": 0.5},
-                    "reasoning": "Using default models due to selection error"
-                }
+    def _parse_selection_response(self, response: dict) -> tuple:
+        """Parse and validate LLM selection response"""
+        selection_text = response["choices"][0]["text"].strip()
+        selection_result = json.loads(selection_text)
+        
+        # Validate the response
+        if "generator" not in selection_result or "critic" not in selection_result:
+            raise ValueError("Missing generator or critic in selection result")
+        
+        return selection_result, selection_text
 
-            state["selected_generator"] = selection_result["generator"]
-            state["selected_critic"] = selection_result["critic"]
-            state["metadata"] = {
-                "task_classification": selection_result.get("task_classification", {"task_type": "unknown"}),
-                "selection_reasoning": selection_result.get("reasoning", "Default selection"),
-                "timestamp": datetime.now().isoformat()
-            }
+    def _validate_and_build_state(self, state: AgentState, selection_result: dict, all_models: Dict) -> None:
+        """Validate selected models and build state"""
+        generator_key = selection_result["generator"]
+        critic_key = selection_result["critic"]
+        
+        # Get the selected models from our database
+        if generator_key not in all_models:
+            raise ValueError(f"Invalid generator key: {generator_key}")
+        if critic_key not in all_models:
+            raise ValueError(f"Invalid critic key: {critic_key}")
+        
+        selected_generator = all_models[generator_key]
+        selected_critic = all_models[critic_key]
+        
+        state["selected_generator"] = {
+            "name": selected_generator.name,
+            "model_id": selected_generator.model_id,
+            "specialties": selected_generator.specialties,
+            "capabilities": selected_generator.capabilities,
+            "strengths": selected_generator.strengths,
+            "use_cases": selected_generator.use_cases,
+            "performance_tier": selected_generator.performance_tier,
+            "context_length": selected_generator.context_length
+        }
+        
+        state["selected_critic"] = {
+            "name": selected_critic.name,
+            "model_id": selected_critic.model_id,
+            "specialties": selected_critic.specialties,
+            "capabilities": selected_critic.capabilities,
+            "strengths": selected_critic.strengths,
+            "use_cases": selected_critic.use_cases,
+            "performance_tier": selected_critic.performance_tier,
+            "context_length": selected_critic.context_length
+        }
+        
+        state["metadata"] = {
+            "selection_reasoning": selection_result.get("reasoning", "No reasoning provided"),
+            "selection_confidence": selection_result.get("confidence", 0.5),
+            "selection_method": "llm_based",
+            "timestamp": datetime.now().isoformat()
+        }
 
-            print(f"✅ Selected Generator: {selection_result['generator']['name']}")
-            print(f"✅ Selected Critic: {selection_result['critic']['name']}")
-            print(f"📋 Task Type: {selection_result['task_classification']['task_type']}")
+        logger.info(f"LLM Selected Generator: {selected_generator.name}")
+        logger.info(f"LLM Selected Critic: {selected_critic.name}")
+        logger.info(f"Selection Reasoning: {selection_result.get('reasoning', 'No reasoning provided')}")
+        logger.info(f"Selection Confidence: {selection_result.get('confidence', 0.5)}")
 
-        except Exception as e:
-            print(f"❌ Error in base agent: {str(e)}")
-            # Fallback to default models using MCP server
-            try:
-                all_models = await mcp_server.handle_request("list_models")
-                state["selected_generator"] = all_models["meta-llama-3.3-70b-instruct-turbo"]
-                state["selected_critic"] = all_models["deepseek-r1-distill-70b"]
-            except:
-                # Ultimate fallback with hardcoded defaults
-                state["selected_generator"] = {
-                    "name": "Meta Llama 3.3 70B Instruct Turbo",
-                    "model_id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-                    "specialties": ["general_chat", "multilingual", "reasoning", "analysis"],
-                    "strengths": "Excellent general-purpose model with strong multilingual support"
-                }
-                state["selected_critic"] = {
-                    "name": "DeepSeek R1 Distill 70B",
-                    "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-70B",
-                    "specialties": ["reasoning", "chain_of_thought", "problem_solving", "analysis"],
-                    "strengths": "Superior chain-of-thought reasoning and complex problem-solving capabilities"
-                }
+    async def base_agent(self, state: AgentState) -> AgentState:
+        """Base agent selects appropriate generator and critic models using LLM-based selection"""
+        logger.info("Base Agent: Selecting optimal models using LLM")
+        
+        # Ensure we have access to the API key
+        if not hasattr(self, 'api_key') or not self.api_key:
+            raise ValueError("API key not available in base_agent")
+
+        # Get all available models from MCP server
+        all_models = mcp_server.list_all_models()
+        
+        try:
+            logger.info("Using API key for model selection")
             
-            state["metadata"] = {
-                "task_classification": {"task_type": "general_conversation", "confidence": 0.5},
-                "selection_reasoning": f"Fallback due to error: {str(e)}",
-                "timestamp": datetime.now().isoformat()
-            }
-            print("✅ Using fallback models")
+            # Prepare data and prompts
+            models_json = self._prepare_models_data(all_models)
+            selection_prompt = self._create_selection_prompt(state, models_json)
+            
+            # Call LLM for selection
+            response = await self._call_llm_for_selection(selection_prompt)
+            
+            # Parse and validate response
+            try:
+                selection_result, selection_text = self._parse_selection_response(response)
+                self._validate_and_build_state(state, selection_result, all_models)
+                
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                logger.error(f"Failed to parse or process LLM selection output: {e}")
+                if 'selection_text' in locals():
+                    logger.debug(f"Raw response: {selection_text}")
+                # Fallback to default selection
+                await self._fallback_model_selection(state, all_models)
+                
+        except Exception as e:
+            logger.error(f"LLM selection failed: {str(e)}")
+            # Fallback to default selection
+            await self._fallback_model_selection(state, all_models)
+
 
         return state
 
+    async def _fallback_model_selection(self, state: AgentState, all_models: Dict):
+        """Fallback model selection when LLM-based selection fails"""
+        logger.info("Using fallback model selection")
+        
+        # Rule-based fallback using configuration
+        user_input_lower = state["user_input"].lower()
+        selected_category = "default"
+        
+        # Check each category for keyword matches
+        for category, rules in FALLBACK_RULES.items():
+            if category == "default":
+                continue
+            if any(keyword in user_input_lower for keyword in rules["keywords"]):
+                selected_category = category
+                break
+        
+        # Get the appropriate model keys
+        if selected_category == "default":
+            generator_key = FALLBACK_RULES["default"]["generator"]
+            critic_key = FALLBACK_RULES["default"]["critic"]
+        else:
+            generator_key = FALLBACK_RULES[selected_category]["generator"]
+            critic_key = FALLBACK_RULES[selected_category]["critic"]
+        
+        selected_generator = all_models[generator_key]
+        selected_critic = all_models[critic_key]
+        
+        state["selected_generator"] = {
+            "name": selected_generator.name,
+            "model_id": selected_generator.model_id,
+            "specialties": selected_generator.specialties,
+            "capabilities": selected_generator.capabilities,
+            "strengths": selected_generator.strengths,
+            "use_cases": selected_generator.use_cases,
+            "performance_tier": selected_generator.performance_tier,
+            "context_length": selected_generator.context_length
+        }
+        
+        state["selected_critic"] = {
+            "name": selected_critic.name,
+            "model_id": selected_critic.model_id,
+            "specialties": selected_critic.specialties,
+            "capabilities": selected_critic.capabilities,
+            "strengths": selected_critic.strengths,
+            "use_cases": selected_critic.use_cases,
+            "performance_tier": selected_critic.performance_tier,
+            "context_length": selected_critic.context_length
+        }
+        
+        state["metadata"] = {
+            "selection_reasoning": f"Fallback selection ({selected_category}): {generator_key} for generation, {critic_key} for criticism",
+            "selection_confidence": 0.6,
+            "selection_method": "fallback_rule_based",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        logger.info(f"Fallback Generator: {selected_generator.name}")
+        logger.info(f"Fallback Critic: {selected_critic.name}")
+        logger.info(f"Fallback Category: {selected_category}")
+
     async def generator_agent(self, state: AgentState) -> AgentState:
         print(f"✍️  Generator Agent: Creating response with {state['selected_generator']['name']}...")
+        
+        # Ensure we have access to the API key
+        if not hasattr(self, 'api_key') or not self.api_key:
+            raise ValueError("API key not available in generator_agent")
 
         generator_name = state['selected_generator']['name'].lower()
         if "flux" in generator_name:
             # Handle image generation with FLUX.1 Schnell
             try:
                 prompt = state["user_input"]
-                response = self.client.images.generate(
-                    model=state["selected_generator"]["model_id"],
+                
+                # Try image generation with global API key
+                response = together.Image.create(
                     prompt=prompt,
-                    n=1,
-                    size="1024x1024",
+                    model=state["selected_generator"]["model_id"],
+                    results=1,
+                    width=1024,
+                    height=1024,
                     steps=3
                 )
-                image_url = response.data[0].url
+                # Validate response structure
+                if not response or "data" not in response or not response["data"] or "url" not in response["data"][0]:
+                    raise ValueError("Invalid response structure from image generation API")
+                
+                image_url = response["data"][0]["url"]
                 state["current_response"] = f"![Generated Image]({image_url})\n\n[View Image]({image_url})"
                 state["last_image_url"] = image_url  # Store last image URL
                 print(f"🖼️ Generated image: {image_url}")
@@ -186,16 +403,32 @@ class TogetherAIWorkflow:
 
         try:
             # Generate response using Together.ai
-            response = self.client.chat.completions.create(
+            # Convert messages to prompt format
+            prompt = ""
+            for msg in messages:
+                if msg["role"] == "system":
+                    prompt += f"System: {msg['content']}\n\n"
+                elif msg["role"] == "user":
+                    prompt += f"User: {msg['content']}\n\n"
+                elif msg["role"] == "assistant":
+                    prompt += f"Assistant: {msg['content']}\n\n"
+            
+            prompt += "Assistant: "
+            
+            response = together.Complete.create(
+                prompt=prompt,
                 model=state["selected_generator"]["model_id"],
-                messages=messages,
                 max_tokens=2048,
                 temperature=0.7,
                 top_p=0.9,
-                stream=False
+                stop=["User:", "System:"]
             )
 
-            generated_response = response.choices[0].message.content
+            # Validate response structure
+            if not response or "choices" not in response or not response["choices"] or "text" not in response["choices"][0]:
+                raise ValueError("Invalid response structure from text generation API")
+            
+            generated_response = response["choices"][0]["text"].strip()
             state["current_response"] = generated_response
 
             print(f"📝 Generated response ({len(generated_response)} chars)")
@@ -209,6 +442,10 @@ class TogetherAIWorkflow:
     async def critic_agent(self, state: AgentState) -> AgentState:
         """Critic agent evaluates and provides feedback on the response"""
         print(f"🔍 Critic Agent: Evaluating with {state['selected_critic']['name']}...")
+        
+        # Ensure we have access to the API key
+        if not hasattr(self, 'api_key') or not self.api_key:
+            raise ValueError("API key not available in critic_agent")
 
         critic_name = state['selected_critic']['name'].lower()
         is_vision_critic = "vision" in critic_name or "image" in critic_name
@@ -244,19 +481,22 @@ If the response is already high-quality (score 8+), you may indicate that minima
 
         try:
             # Get critic evaluation
-            response = self.client.chat.completions.create(
+            prompt = f"System: You are a helpful and constructive AI response critic.\n\nUser: {critic_prompt}\n\nAssistant: "
+            
+            response = together.Complete.create(
+                prompt=prompt,
                 model=state["selected_critic"]["model_id"],
-                messages=[
-                    {"role": "system", "content": "You are a helpful and constructive AI response critic."},
-                    {"role": "user", "content": critic_prompt}
-                ],
                 max_tokens=1024,
                 temperature=0.3,
                 top_p=0.9,
-                stream=False
+                stop=["User:", "System:"]
             )
 
-            critic_feedback = response.choices[0].message.content
+            # Validate response structure
+            if not response or "choices" not in response or not response["choices"] or "text" not in response["choices"][0]:
+                raise ValueError("Invalid response structure from critic API")
+            
+            critic_feedback = response["choices"][0]["text"].strip()
             state["critic_feedback"] = critic_feedback
 
             # Extract quality score for decision making

@@ -15,10 +15,10 @@ An intelligent chat application that leverages Together.ai's free models through
 ## 🚀 Features
 
 ### **Intelligent Multi-Agent Architecture**
-- **Base Agent**: Analyzes queries and selects optimal generator/critic model pairs
+- **Base Agent**: Uses LLM-based selection to choose optimal generator/critic model pairs
 - **Generator Agent**: Creates responses using specialized Together.ai models
 - **Critic Agent**: Reviews and suggests improvements through iterative refinement
-- **Model Context Protocol (MCP)**: Smart model selection based on task classification
+- **Model Context Protocol (MCP)**: Provides model metadata for LLM-based selection
 
 ### **8 Specialized Together.ai Free Models**
 - **Meta-Llama-3.3-70B-Instruct-Turbo**: General chat, multilingual, reasoning
@@ -126,11 +126,11 @@ http://localhost:8000
 4. Press **Enter** to send (or **Shift+Enter** for new line)
 
 ### **Understanding the Process**
-1. **Model Selection**: Base agent analyzes your query and selects optimal models
+1. **LLM-Based Model Selection**: Base agent uses LLM to analyze query and select optimal models from all available options
 2. **Generation**: Selected generator model creates initial response
 3. **Criticism**: Critic model reviews and suggests improvements
 4. **Refinement**: Iterative improvement until quality threshold is met
-5. **Delivery**: Final response with metadata (models used, iterations, quality score)
+5. **Delivery**: Final response with metadata (models used, iterations, quality score, selection reasoning)
 
 ### **Example Queries**
 ```
@@ -179,10 +179,11 @@ together-ai-multi-agent-chat/
 ## 🔧 Configuration Options
 
 ### **Model Selection Tuning**
-Edit `mcp_server.py` to modify:
-- Task classification patterns
-- Model selection rules
-- Confidence thresholds
+The system now uses LLM-based selection for optimal model choice:
+- **Dynamic Selection**: LLM analyzes each query and selects best models from all available options
+- **Context-Aware**: Considers query type, complexity, and conversation history
+- **Fallback System**: Rule-based fallback if LLM selection fails
+- **Transparency**: Shows selection reasoning and confidence scores
 
 ### **Workflow Parameters**
 Edit `langgraph_workflow.py` to adjust:
