@@ -23,10 +23,7 @@ parts/
 sdist/
 var/
 wheels/
-<<<<<<< HEAD
-=======
 share/python-wheels/
->>>>>>> dynamic-mcp-approach
 *.egg-info/
 .installed.cfg
 *.egg
@@ -38,7 +35,6 @@ env/
 ENV/
 env.bak/
 venv.bak/
-<<<<<<< HEAD
 
 # IDE
 .vscode/
@@ -72,7 +68,6 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
-=======
 .venv/
 
 # PyCharm
@@ -80,7 +75,6 @@ coverage.xml
 
 # VS Code
 .vscode/
->>>>>>> dynamic-mcp-approach
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -100,9 +94,6 @@ celerybeat.pid
 
 # SageMath parsed files
 *.sage.py
-
-<<<<<<< HEAD
-=======
 # Environments
 .env
 .venv
@@ -111,8 +102,6 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
->>>>>>> dynamic-mcp-approach
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -126,9 +115,6 @@ venv.bak/
 # mypy
 .mypy_cache/
 .dmypy.json
-<<<<<<< HEAD
-dmypy.json 
-=======
 dmypy.json
 
 # Pyre type checker
@@ -301,4 +287,3 @@ temp/
 *password*
 *token*
 *credential* 
->>>>>>> dynamic-mcp-approach
